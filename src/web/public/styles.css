@@ -5373,6 +5373,23 @@ body.touch-device .terminal-container .xterm .xterm-helper-textarea {
   font-size: 0.6rem;
 }
 
+/* The account picker sits under two checkbox rows, so it borrows their density
+   (.checkbox-inline is 0.8rem) instead of the full-size .form-label/.form-select
+   used inside modals — at modal scale the label alone outweighs the whole popover. */
+:is(.case-settings-popover, .case-settings-popover-mobile) .form-label {
+  display: block;
+  margin-top: 0.5rem;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+:is(.case-settings-popover, .case-settings-popover-mobile) .form-select {
+  width: 100%;
+  margin-top: 0.25rem;
+  padding: 0.25rem 0.35rem;
+  font-size: 0.72rem;
+}
+
 /* Case Management List (Manage tab) */
 .case-manage-list {
   display: flex;

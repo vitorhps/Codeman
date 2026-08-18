@@ -1892,6 +1892,8 @@ Object.assign(CodemanApp.prototype, {
       const settings = this.getCaseSettings(caseName);
       document.getElementById('caseAgentTeams').checked = settings.agentTeams;
       document.getElementById('caseOpusContext1m').checked = settings.opusContext1m;
+      // Server-side binding: fetched, so it fills in just after the popover opens.
+      this.populateCaseClaudeProfile('caseClaudeProfile', caseName);
       popover.classList.remove('hidden');
 
       // Close on outside click (one-shot listener)
@@ -1905,6 +1907,84 @@ Object.assign(CodemanApp.prototype, {
       setTimeout(() => document.addEventListener('click', closeHandler), 0);
     } else {
       popover.classList.add('hidden');
+    }
+  },
+
+  /**
+   * Fill a "Claude account" picker with the config dirs discoverable on the host
+   * and select the one this case is bound to.
+   *
+   * The binding is SERVER-side (unlike the checkboxes above it, which are
+   * localStorage), so the current value is read from `this.cases` — already
+   * refreshed by loadQuickStartCases() — rather than from local storage. That is
+   * also why the option list is fetched rather than hardcoded: which accounts
+   * exist is a property of the machine, not of this browser.
+   */
+  async populateCaseClaudeProfile(selectId, caseName) {
+    const select = document.getElementById(selectId);
+    const label = document.querySelector(`label[for="${selectId}"]`);
+    const hint = select?.nextElementSibling;
+    if (!select) return;
+    const setVisible = (on) => {
+      // Hidden by inline style, not a class: the popover has no rule for one, and a
+      // control whose every save would 403 is worse than no control at all.
+      for (const el of [label, select, hint]) if (el) el.style.display = on ? '' : 'none';
+    };
+    try {
+      // Re-fetched per open rather than cached for the page lifetime: the list is a
+      // local directory scan, and an account logged into during the session would
+      // otherwise never appear until a reload.
+      const res = await fetch('/api/claude-profiles');
+      const body = await res.json();
+      // Admin-only in multi-user mode; a non-admin gets an error envelope.
+      if (!body?.success) { setVisible(false); return; }
+      setVisible(true);
+      this._claudeProfiles = body.data.profiles || [];
+      const current = (this.cases || []).find(c => c.name === caseName)?.claudeConfigDir || '';
+      select.innerHTML = '';
+      const mk = (value, text) => {
+        const o = document.createElement('option');
+        o.value = value;
+        o.textContent = text;  // never innerHTML: label carries a real account email
+        select.appendChild(o);
+      };
+      mk('', 'Default (~/.claude)');
+      for (const p of this._claudeProfiles) {
+        if (p.isDefault) continue;  // already offered as the empty "no override" entry
+        const bits = [p.label];
+        if (p.email) bits.push(p.email);
+        if (!p.hasCredentials) bits.push('needs login');
+        mk(p.path, bits.join(' — '));
+      }
+      // A binding pointing somewhere not in the discovered list (operator set it
+      // by API) must still round-trip instead of silently resetting to default.
+      if (current && !this._claudeProfiles.some(p => p.path === current)) mk(current, current);
+      select.value = current;
+    } catch {
+      // leave the static Default option in place
+    }
+  },
+
+  /** Persist the case→account binding, then refresh this.cases so it sticks. */
+  async onCaseClaudeProfileChanged(mobile = false) {
+    const caseName = document.getElementById('quickStartCase').value || 'testcase';
+    const select = document.getElementById(mobile ? 'caseClaudeProfileMobile' : 'caseClaudeProfile');
+    const configDir = select ? select.value : '';
+    try {
+      const res = await fetch(`/api/cases/${encodeURIComponent(caseName)}/claude-profile`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ configDir }),
+      });
+      const body = await res.json();
+      if (!body?.success) { this.showToast?.(body?.error || 'Could not save the account', 'error'); return; }
+      const c = (this.cases || []).find(x => x.name === caseName);
+      if (c) c.claudeConfigDir = configDir || undefined;
+      // Mirror to the other viewport's picker, matching the checkboxes above.
+      const other = document.getElementById(mobile ? 'caseClaudeProfile' : 'caseClaudeProfileMobile');
+      if (other) other.value = configDir;
+    } catch {
+      this.showToast?.('Could not save the account', 'error');
     }
   },
 
@@ -1940,6 +2020,7 @@ Object.assign(CodemanApp.prototype, {
       const settings = this.getCaseSettings(caseName);
       document.getElementById('caseAgentTeamsMobile').checked = settings.agentTeams;
       document.getElementById('caseOpusContext1mMobile').checked = settings.opusContext1m;
+      this.populateCaseClaudeProfile('caseClaudeProfileMobile', caseName);
       popover.classList.remove('hidden');
 
       const closeHandler = (e) => {

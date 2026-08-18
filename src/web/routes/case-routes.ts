@@ -21,6 +21,7 @@ import {
   ClonePreflightSchema,
   LinkCaseSchema,
   CaseOrderSchema,
+  CaseClaudeProfileSchema,
   RemoteCaseLinkSchema,
   RemoteHostSchema,
   DockerCaseLinkSchema,
@@ -29,6 +30,8 @@ import {
   DockerImportSchema,
   DockerQuickCreateSchema,
 } from '../schemas.js';
+import { clearCaseProfile, isUsableConfigDir, readCaseProfiles, writeCaseProfiles } from '../../case-profiles.js';
+import { listClaudeProfiles, type ClaudeProfileInfo } from '../../claude-profiles.js';
 import { exportDockerCase, importDockerBundle, listDockerExports, exportBundleName } from '../../docker-export.js';
 import {
   cloneRepository,
@@ -301,6 +304,18 @@ export function registerCaseRoutes(app: FastifyInstance, ctx: EventPort & Config
       }
     }
 
+    // Per-case Claude account binding (#255 follow-up). Local/linked only —
+    // docker cases seed credentials into the container and remote cases use the
+    // remote host's own config dir, so a CLAUDE_CONFIG_DIR here would be a lie.
+    // A binding whose dir has since been deleted is dropped rather than shown,
+    // so the picker never displays a path that would not actually take effect.
+    const caseProfiles = await readCaseProfiles();
+    for (const c of cases) {
+      if (c.location !== 'local' && c.location !== 'linked-local') continue;
+      const dir = caseProfiles[c.path];
+      if (dir && (await isUsableConfigDir(dir))) c.claudeConfigDir = dir;
+    }
+
     // Sort by persisted caseOrder from settings.json
     const settings = await readJsonConfig<Record<string, unknown>>(SETTINGS_PATH, 'settings', {});
     const caseOrder = Array.isArray(settings.caseOrder) ? (settings.caseOrder as string[]) : [];
@@ -550,6 +565,63 @@ export function registerCaseRoutes(app: FastifyInstance, ctx: EventPort & Config
     isAdmin(req)
       ? null
       : (reply.code(403), createErrorResponse(ApiErrorCode.FORBIDDEN, 'Admin only in multi-user mode'));
+
+  /**
+   * Claude account config dirs discoverable on this machine, for the per-case
+   * picker. Admin-gated for the same reason the host routes below are: the list
+   * enumerates which accounts exist on the box (and their emails), which is
+   * operator information, and only an admin can act on it via the PUT anyway.
+   */
+  app.get('/api/claude-profiles', async (req, reply): Promise<ApiResponse<{ profiles: ClaudeProfileInfo[] }>> => {
+    const denied = adminOnly(req, reply);
+    if (denied) return denied;
+    return { success: true, data: { profiles: await listClaudeProfiles() } };
+  });
+
+  /**
+   * Bind (or clear) the Claude account a case's sessions run on.
+   *
+   * Stored under the case's resolved PATH — see the module note in
+   * case-profiles.ts for why a name-keyed registry leaks across case spaces.
+   */
+  app.put('/api/cases/:name/claude-profile', async (req, reply): Promise<ApiResponse<{ configDir: string | null }>> => {
+    const denied = adminOnly(req, reply);
+    if (denied) return denied;
+
+    const { name } = req.params as { name: string };
+    if (!SAFE_CASE_NAME.test(name)) {
+      return createErrorResponse(ApiErrorCode.INVALID_INPUT, 'Invalid case name format');
+    }
+    // Docker cases seed credentials into the container and remote cases use the
+    // remote host's own config dir, so a binding on either would be stored and
+    // then silently never applied. Refuse rather than accept a no-op.
+    const remoteNames = new Set((await readRemoteCases(CODEMAN_CONFIG_DIR)).map((c) => c.name));
+    const dockerNames = new Set((await readDockerCases(CODEMAN_CONFIG_DIR)).map((c) => c.name));
+    if (remoteNames.has(name) || dockerNames.has(name)) {
+      return createErrorResponse(
+        ApiErrorCode.INVALID_INPUT,
+        'Only local and linked cases can be bound to a Claude account'
+      );
+    }
+
+    const casePath = await resolveCasePath(name, getAuthUser(req));
+    const { configDir } = parseBody(CaseClaudeProfileSchema, req.body);
+    const profiles = await readCaseProfiles();
+
+    if (!configDir) {
+      delete profiles[casePath];
+      await writeCaseProfiles(profiles);
+      return { success: true, data: { configDir: null } };
+    }
+    // Validate at write time so a typo surfaces here rather than as a session
+    // that silently starts on the wrong (default) account.
+    if (!(await isUsableConfigDir(configDir))) {
+      return createErrorResponse(ApiErrorCode.INVALID_INPUT, `Not an existing directory: ${configDir}`);
+    }
+    profiles[casePath] = configDir;
+    await writeCaseProfiles(profiles);
+    return { success: true, data: { configDir } };
+  });
 
   // COD-105 — discover `codeman-*` tmux sessions already running on a remote
   // host (created by the remote's own Codeman, another instance, or this one)
@@ -1176,9 +1248,13 @@ export function registerCaseRoutes(app: FastifyInstance, ctx: EventPort & Config
     // must not unlink one either; skip so control falls through to their local delete.
     const linkedCases = await readLinkedCases();
     if (linkedCases[name] && (!isMultiUserMode() || isAdmin(req))) {
+      const unlinkedPath = linkedCases[name];
       delete linkedCases[name];
       try {
         await fs.writeFile(LINKED_CASES_FILE, JSON.stringify(linkedCases, null, 2));
+        // Drop the account binding with it, so re-linking the same folder later
+        // starts on the default account instead of silently inheriting the old one.
+        await clearCaseProfile(unlinkedPath);
         ctx.broadcast(SseEvent.CaseDeleted, { name, type: 'unlinked' });
         return { success: true, data: { name } };
       } catch (err) {
@@ -1194,6 +1270,9 @@ export function registerCaseRoutes(app: FastifyInstance, ctx: EventPort & Config
 
     try {
       await fs.rm(casePath, { recursive: true, force: true });
+      // Same reasoning as the unlink above: a case recreated at this path must
+      // not inherit the deleted case's Claude account.
+      await clearCaseProfile(casePath);
       ctx.broadcast(SseEvent.CaseDeleted, { name, type: 'deleted' });
       return { success: true, data: { name } };
     } catch (err) {

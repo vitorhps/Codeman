@@ -675,6 +675,11 @@
                 <span>1M Opus Context</span>
               </label>
               <span class="form-hint">Use 1M token context window for new sessions</span>
+              <label class="form-label" for="caseClaudeProfile">Claude account</label>
+              <select id="caseClaudeProfile" class="form-select" onchange="app.onCaseClaudeProfileChanged()">
+                <option value="">Default (~/.claude)</option>
+              </select>
+              <span class="form-hint">New sessions in this case sign in as this account. Stored on the server, so it follows you across devices. A non-default account writes its transcripts outside <code>~/.claude/projects</code>, so the response viewer, subagent windows and Read My Mind go blind for those sessions unless you symlink <code>projects</code> back into the shared tree.</span>
             </div>
           </div>
           <!-- Mobile-only case button + gear -->
@@ -704,6 +709,11 @@
               <span>1M Opus Context</span>
             </label>
             <span class="form-hint">Use 1M token context window</span>
+            <label class="form-label" for="caseClaudeProfileMobile">Claude account</label>
+            <select id="caseClaudeProfileMobile" class="form-select" onchange="app.onCaseClaudeProfileChanged(true)">
+              <option value="">Default (~/.claude)</option>
+            </select>
+            <span class="form-hint">Account new sessions in this case sign in as. A non-default account writes transcripts outside the shared tree, so the response viewer and subagent windows go blind for them.</span>
           </div>
         </div>
 

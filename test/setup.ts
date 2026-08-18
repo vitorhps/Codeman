@@ -38,6 +38,12 @@ delete process.env.CODEMAN_USERNAME;
 // __codemanGestureAvailable flag), breaking byte-identity assertions
 // (test/server-index-title.test.ts) when the shell exports CODEMAN_GESTURE=1.
 delete process.env.CODEMAN_GESTURE;
+// The temp HOME above is NOT enough to isolate Claude's config: claude-credentials.ts
+// honors CLAUDE_CONFIG_DIR first and only falls back to `${HOME}/.claude`. A shell that
+// exports it (running the suite from a session pinned to a second Claude account) leaks
+// REAL credentials past the fixture — test/routes/voice-routes.test.ts then sees a live
+// subscription where it removed the credentials file, and 5 tests fail with no code change.
+delete process.env.CLAUDE_CONFIG_DIR;
 
 afterEach(() => {
   vi.clearAllMocks();

@@ -149,6 +149,13 @@ export interface CaseInfo {
   location?: 'local' | 'linked-local' | 'remote' | 'docker';
   /** Whether this is a linked local folder */
   linked?: boolean;
+  /**
+   * Claude account this case runs on, as an absolute `CLAUDE_CONFIG_DIR`
+   * (#255 follow-up). Absent = the CLI default (`~/.claude`). Local and
+   * linked-local cases only: docker cases seed credentials into the container
+   * and remote cases use the remote host's own config dir.
+   */
+  claudeConfigDir?: string;
   /** Remote case metadata for display and session creation */
   remote?: {
     hostId: string;

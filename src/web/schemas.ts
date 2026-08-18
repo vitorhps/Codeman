@@ -1334,6 +1334,18 @@ export const CaseOrderSchema = z.object({
   order: z.array(z.string().regex(/^[a-zA-Z0-9_-]+$/, 'Invalid case name format')),
 });
 
+/**
+ * PUT /api/cases/:name/claude-profile — bind a case to a Claude account.
+ *
+ * `configDir` is the absolute `CLAUDE_CONFIG_DIR` the case's sessions run under;
+ * empty string clears the binding (back to the CLI default `~/.claude`). It
+ * reuses `safePathSchema` because the value ends up shellescaped into
+ * `tmux setenv`, exactly like the `envOverrides` path it feeds.
+ */
+export const CaseClaudeProfileSchema = z.object({
+  configDir: z.union([z.literal(''), safePathSchema]),
+});
+
 /** PUT /api/session-order — global tab order (ordered sessionIds), COD-131 */
 export const SessionOrderUpdateSchema = z.object({
   // Bounded defensively: ids are uuid-ish (<=100 chars) and the client pushes only
