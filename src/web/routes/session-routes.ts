@@ -131,6 +131,7 @@ import {
   toSessionDocker,
 } from '../../docker-hosts.js';
 import { LRUMap } from '../../utils/lru-map.js';
+import { withCaseConfigDir } from '../../case-profiles.js';
 
 // Path to linked-cases registry (same file used by case-routes resolveCasePath)
 const LINKED_CASES_FILE = dataPath('linked-cases.json');
@@ -928,7 +929,14 @@ export function registerSessionRoutes(
       antigravityConfig: mode === 'antigravity' ? gatedAntigravityConfig : undefined,
       piConfig: mode === 'pi' ? gatedPiConfig : undefined,
       resumeSessionId: validatedResumeId,
-      envOverrides: body.envOverrides,
+      // Per-case Claude account (#255 follow-up). Resolved HERE rather than in
+      // the frontend's buildEnvOverrides() so every spawn path inherits it —
+      // web UI, mobile overview, cron jobs, the Ralph wizard and raw API callers.
+      // Skipped for remote sessions: the pane runs on the remote host, where a
+      // local config dir path is meaningless. (Docker sessions never reach this
+      // route — they are created by the case-launch endpoint, and their
+      // credentials are seeded into the container by docker-hosts.ts.)
+      envOverrides: remote ? body.envOverrides : await withCaseConfigDir(body.envOverrides, workingDir),
       effort: body.effort,
       tmuxHistoryLimit: terminalHistoryConfig.tmuxHistoryLimit,
       remote,
